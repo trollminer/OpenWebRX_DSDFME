@@ -80,8 +80,8 @@ class FeatureDetector(object):
         # optional features and their requirements
         "digital_voice_digiham": ["digiham", "codecserver_ambe"],
         "digital_voice_freedv": ["freedv_rx"],
-        "digital_voice_rade": ["webrx_rade_decode"],
         "digital_voice_m17": ["m17_demod"],
+        "digital_voice_dsd_fme": ["dsd_fme"],
         "wsjt-x": ["wsjtx"],
         "wsjt-x-2-3": ["wsjtx_2_3"],
         "wsjt-x-2-4": ["wsjtx_2_4"],
@@ -476,6 +476,14 @@ class FeatureDetector(object):
         """
         return self.command_is_runnable("m17-demod", 0)
 
+    def has_dsd_fme(self):
+        """
+        OpenWebRX can use the [DSD-FME](https://github.com/lwvmobile/dsd-fme)
+        decoder for digital voice demodulation. Make sure the `dsd-fme`
+        executable is installed and available in `$PATH`.
+        """
+        return self.command_is_runnable("dsd-fme -h")
+
     def has_direwolf(self):
         """
         OpenWebRX uses the [Direwolf](https://github.com/wb2osz/direwolf)
@@ -598,17 +606,6 @@ class FeatureDetector(object):
         [OpenWebRX Wiki](https://github.com/jketterl/openwebrx/wiki/FreeDV-demodulator-notes).
         """
         return self.command_is_runnable("freedv_rx")
-
-    def has_webrx_rade_decode(self):
-        """
-        The `webrx_rade_decode` executable is required to demodulate more
-        modern FreeDV RADE digital transmissions. To obtain it, you will
-        have to compile the
-        [RADAE Project](https://github.com/peterbmarks/radae_decoder)
-        from sources and then manually install the `tools/webrx_rade_decode`
-        executable.
-        """
-        return self.command_is_runnable("webrx_rade_decode")
 
     def has_dream(self):
         """

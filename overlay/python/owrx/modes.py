@@ -134,6 +134,10 @@ class Js8Mode(AudioChopperMode):
 
 
 class Modes(object):
+    aliases = {
+        "dsd-fme-auto": "dsdfme",
+    }
+
     mappings = [
         AnalogMode("nfm", "FM", bandpass=Bandpass(-4000, 4000)),
         AnalogMode("wfm", "WFM", bandpass=Bandpass(-75000, 75000)),
@@ -181,7 +185,6 @@ class Modes(object):
         AnalogMode(
             "freedv", "FreeDV", bandpass=Bandpass(300, 3000), requirements=["digital_voice_freedv"], squelch=False
         ),
-        AnalogMode("rade", "RADE", bandpass=Bandpass(300, 3000), requirements=["digital_voice_rade"], squelch=False),
         AnalogMode("drm", "DRM", bandpass=Bandpass(-5000, 5000), requirements=["drm"], squelch=False),
         AnalogMode("dab", "DAB", bandpass=None, ifRate=2048000, requirements=["dab"], squelch=False),
         AnalogMode("hdr", "HDR", bandpass=Bandpass(-200000, 200000), requirements=["hdradio"], squelch=False),
@@ -495,6 +498,7 @@ class Modes(object):
 
     @staticmethod
     def findByModulation(modulation):
+        modulation = Modes.aliases.get(modulation, modulation)
         modes = [m for m in Modes.getAvailableModes() if m.modulation == modulation]
         if modes:
             return modes[0]

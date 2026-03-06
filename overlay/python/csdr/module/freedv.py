@@ -9,12 +9,3 @@ class FreeDVModule(ExecModule):
             Format.SHORT,
             ["freedv_rx", "1600", "-", "-"]
         )
-
-
-class RADEModule(ExecModule):
-    def __init__(self):
-        super().__init__(
-            Format.SHORT,
-            Format.SHORT,
-            ["webrx_rade_decode"]
-        )
