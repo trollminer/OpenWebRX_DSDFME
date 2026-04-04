@@ -1,6 +1,6 @@
 #!/bin/bash
 # OpenWebRX DSD-FME Master: Full Build & Integration
-# Version: 6.0 - The "All-In-One" Surgical Solution
+# Version: 6.1 - Robust File Handling
 set -e
 
 # ==========================================================
@@ -15,7 +15,6 @@ NC='\033[0m'
 
 REPO_ROOT=$(pwd)
 
-# Ensure script is run as root
 if [[ $EUID -ne 0 ]]; then
    echo -e "${ERROR}FAIL: This script must be run as root (sudo).${NC}"
    exit 1
@@ -36,7 +35,6 @@ for pkg in "${PACKAGES[@]}"; do
     if dpkg -s "$pkg" >/dev/null 2>&1; then
         echo -e "${WARN}SKIP: $pkg is already installed.${NC}"
     else
-        echo -e "${INFO}MARKING: $pkg for installation...${NC}"
         MISSING_PKGS+=("$pkg")
     fi
 done
@@ -44,8 +42,6 @@ done
 if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
     echo -e "${INFO}Installing missing packages...${NC}"
     apt-get update && apt-get install -y "${MISSING_PKGS[@]}"
-else
-    echo -e "${SUCCESS}All system dependencies are met.${NC}"
 fi
 
 # ==========================================================
@@ -76,31 +72,36 @@ build_git_proj() {
     fi
 }
 
-# Build mbelib (Checks for the shared library)
 build_git_proj "mbelib" "https://github.com/lwvmobile/mbelib.git" "/usr/local/lib/libmbe.so"
-
-# Build dsd-fme (Checks for the binary)
 build_git_proj "dsd-fme" "https://github.com/lwvmobile/dsd-fme.git" "/usr/local/bin/dsd-fme"
 
 # ==========================================================
-# STEP 3: WEB UI INTEGRATION
+# STEP 3: WEB UI INTEGRATION (Enhanced Logic)
 # ==========================================================
 echo -e "\n${HEADER}===> [STEP 3] WEB UI INTEGRATION <===${NC}"
 HTDOCS_DEST="/usr/lib/python3/dist-packages/htdocs/plugins/receiver"
 OVERLAY_SRC="$REPO_ROOT/overlay"
 INIT_FILE="$HTDOCS_DEST/init.js"
 
+mkdir -p "$HTDOCS_DEST"
+
 if [ -f "$INIT_FILE" ]; then
-    [ ! -f "${INIT_FILE}.dsd_orig" ] && cp -v "$INIT_FILE" "${INIT_FILE}.dsd_orig"
+    # Case: File exists
     if grep -q "dsdfme_auto" "$INIT_FILE"; then
         echo -e "${WARN}SKIP: init.js already patched.${NC}"
     else
-        echo -e "${INFO}PATCHING: Adding DSD logic to init.js...${NC}"
+        echo -e "${INFO}PATCHING: Appending DSD logic to existing init.js...${NC}"
+        [ ! -f "${INIT_FILE}.dsd_orig" ] && cp -v "$INIT_FILE" "${INIT_FILE}.dsd_orig"
         echo "" >> "$INIT_FILE"
         cat "$OVERLAY_SRC/htdocs/plugins/receiver/init.js" >> "$INIT_FILE"
     fi
+else
+    # Case: File does NOT exist
+    echo -e "${INFO}INSTALLING: Creating new init.js from overlay...${NC}"
+    cp -v "$OVERLAY_SRC/htdocs/plugins/receiver/init.js" "$INIT_FILE"
 fi
 
+# Copy dsdfme_auto folder
 if [ ! -d "$HTDOCS_DEST/dsdfme_auto" ]; then
     echo -e "${INFO}COPYING: Web assets (dsdfme_auto)...${NC}"
     mkdir -p "$HTDOCS_DEST/dsdfme_auto"
@@ -128,6 +129,9 @@ for FILE in "${PY_FILES[@]}"; do
             echo "" >> "$TARGET"
             cat "$SOURCE" >> "$TARGET"
         fi
+    else
+        # If core files are missing, OWRX is likely not installed correctly
+        echo -e "${ERROR}ERROR: $FILE not found in $PYTHON_OWRX! Skipping patch.${NC}"
     fi
 done
 
@@ -137,18 +141,17 @@ done
 echo -e "\n${HEADER}===> [STEP 5] CSDR MIGRATION <===${NC}"
 PYTHON_CSDR="/usr/lib/python3/dist-packages/csdr"
 
+# Ensure directories exist for CSDR
+mkdir -p "$PYTHON_CSDR/module" "$PYTHON_CSDR/chain"
+
 if [ ! -f "$PYTHON_CSDR/module/dsdfme.py" ]; then
     echo -e "${INFO}INSTALLING: CSDR Module (dsdfme.py)${NC}"
     cp -v "$OVERLAY_SRC/python/csdr/module/dsdfme.py" "$PYTHON_CSDR/module/dsdfme.py"
-else
-    echo -e "${WARN}SKIP: CSDR Module already exists.${NC}"
 fi
 
 if [ ! -f "$PYTHON_CSDR/chain/dsdfme.py" ]; then
     echo -e "${INFO}INSTALLING: CSDR Chain (dsdfme.py)${NC}"
     cp -v "$OVERLAY_SRC/python/csdr/chain/dsdfme.py" "$PYTHON_CSDR/chain/dsdfme.py"
-else
-    echo -e "${WARN}SKIP: CSDR Chain already exists.${NC}"
 fi
 
 # ==========================================================
@@ -156,7 +159,6 @@ fi
 # ==========================================================
 echo -e "\n${HEADER}===> [STEP 6] FINALIZING SYSTEM <===${NC}"
 
-# Clean up systemd overrides if they exist
 if [ -f "/etc/systemd/system/openwebrx.service.d/override.conf" ]; then
     rm -f /etc/systemd/system/openwebrx.service.d/override.conf
     systemctl daemon-reload
@@ -165,5 +167,4 @@ fi
 echo -e "${INFO}Restarting OpenWebRX service...${NC}"
 systemctl restart openwebrx
 
-echo -e "\n${SUCCESS}COMPLETE: All components built and integrated!${NC}"
-dsd-fme -v | head -n 1
+echo -e "\n${SUCCESS}COMPLETE: Everything is installed and integrated!${NC}"
