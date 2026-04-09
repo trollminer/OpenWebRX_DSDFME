@@ -7,8 +7,8 @@ import socket
 import time
 import re
 import pickle
-import json
 import queue
+import json
 import logging
 import os
 from collections import deque
@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 class RadioIdApiResolver:
+    """Resolves DMR/P25 IDs via radioid.net API with caching and rate limiting."""
+
     API_URL = "https://radioid.net/api/dmr/user/?id={}"
     USER_AGENT = "OpenWebRX-DSDFME/1.0"
     REQUEST_TIMEOUT_SEC = 3.0
@@ -47,6 +49,7 @@ class RadioIdApiResolver:
             self.worker.join(timeout=1.0)
 
     def resolve_nonblocking(self, id_int: int):
+        """Return (callsign, name) from cache or queue lookup; non-blocking."""
         now = time.monotonic()
         with self.lock:
             cached = self.cache_ok.get(id_int)
@@ -105,7 +108,8 @@ class RadioIdApiResolver:
                     else:
                         callsign, name = result
                         self.cache_ok[id_int] = (callsign, name, time.monotonic())
-                        logger.debug("DSDFME_IDAPI hit id=%s source=api callsign=%s name=%s", id_int, callsign, name)
+                        logger.debug("DSDFME_IDAPI hit id=%s source=api callsign=%s name=%s",
+                                     id_int, callsign, name)
             except Exception as e:
                 with self.lock:
                     self.pending.discard(id_int)
@@ -154,6 +158,8 @@ class RadioIdApiResolver:
 
 
 class DsdFmeModule(AutoStartModule):
+    """OpenWebRX module that runs dsd-fme for digital voice decoding."""
+
     TCP_HOST = "127.0.0.1"
     RESTART_DELAY_SEC = 2.0
     PROFILES = {
@@ -223,7 +229,7 @@ class DsdFmeModule(AutoStartModule):
         self._tcp_port = None
         self._udp_port = None
         super().__init__()
-        self.doRun = False
+        self._stop_event = Event()
         self.process = None
         self.tcpServerSocket = None
         self.tcpClientSocket = None
@@ -264,7 +270,7 @@ class DsdFmeModule(AutoStartModule):
             "-i",
             f"tcp:{DsdFmeModule.TCP_HOST}:{self._tcp_port}",
             "-o",
-            "udp:127.0.0.1:{}".format(self._udp_port),
+            f"udp:127.0.0.1:{self._udp_port}",
         ] + DsdFmeModule.PROFILES.get(self._profile_key, DsdFmeModule.PROFILE_ARGS)
 
     def _newState(self, slot: str = None, mode: str = None):
@@ -304,10 +310,10 @@ class DsdFmeModule(AutoStartModule):
             self.singleState = self._newState()
 
     def start(self):
-        if self.doRun:
+        if self._stop_event.is_set():
             return
 
-        self.doRun = True
+        self._stop_event.clear()
         self.reader.resume()
 
         self.inputThread = Thread(target=self._inputLoop, daemon=True)
@@ -317,7 +323,7 @@ class DsdFmeModule(AutoStartModule):
         self.managerThread.start()
 
     def stop(self):
-        self.doRun = False
+        self._stop_event.set()
         self.reader.stop()
         self._stopProcess()
         if self.idApiResolver is not None:
@@ -350,7 +356,7 @@ class DsdFmeModule(AutoStartModule):
             process = Popen(cmd, stdin=DEVNULL, stdout=DEVNULL, stderr=PIPE)
         except FileNotFoundError:
             logger.error("Unable to start dsd-fme: command not found")
-            self.doRun = False
+            self._stop_event.set()
             audioSocket.close()
             tcpServerSocket.close()
             return False
@@ -372,7 +378,8 @@ class DsdFmeModule(AutoStartModule):
         Thread(target=self._audioLoop, args=[process, audioSocket], daemon=True).start()
         Thread(target=self._stderrLoop, args=[process], daemon=True).start()
 
-        logger.info("Started dsd-fme profile=%s tcp_port=%s udp_port=%s", self._profile_key, self._tcp_port, self._udp_port)
+        logger.info("Started dsd-fme profile=%s tcp_port=%s udp_port=%s",
+                    self._profile_key, self._tcp_port, self._udp_port)
         return True
 
     def _stopProcess(self):
@@ -427,12 +434,12 @@ class DsdFmeModule(AutoStartModule):
                 logger.exception("Error while closing dsd-fme audio socket")
 
     def _managerLoop(self):
-        while self.doRun:
+        while not self._stop_event.is_set():
             if not self._startProcess():
                 time.sleep(1.0)
                 continue
 
-            while self.doRun:
+            while not self._stop_event.is_set():
                 with self.processLock:
                     process = self.process
                 if process is None:
@@ -450,15 +457,14 @@ class DsdFmeModule(AutoStartModule):
                 time.sleep(0.2)
 
             self._stopProcess()
-
-            if self.doRun:
+            if not self._stop_event.is_set():
                 time.sleep(DsdFmeModule.RESTART_DELAY_SEC)
 
     def _inputLoop(self):
-        while self.doRun:
+        while not self._stop_event.is_set():
             data = self.reader.read()
             if data is None:
-                self.doRun = False
+                self._stop_event.set()
                 break
             if len(data) == 0:
                 continue
@@ -488,7 +494,7 @@ class DsdFmeModule(AutoStartModule):
                 logger.exception("Error writing discriminator audio to dsd-fme TCP input")
 
     def _tcpAcceptLoop(self, process, tcpServerSocket):
-        while self.doRun and process.poll() is None:
+        while not self._stop_event.is_set() and process.poll() is None:
             try:
                 conn, _ = tcpServerSocket.accept()
                 conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -511,7 +517,7 @@ class DsdFmeModule(AutoStartModule):
                 return
 
     def _audioLoop(self, process, audioSocket):
-        while self.doRun and process.poll() is None:
+        while not self._stop_event.is_set() and process.poll() is None:
             try:
                 data, _ = audioSocket.recvfrom(8192)
             except socket.timeout:
@@ -529,7 +535,7 @@ class DsdFmeModule(AutoStartModule):
                 break
 
     def _stderrLoop(self, process):
-        while self.doRun and process.poll() is None:
+        while not self._stop_event.is_set() and process.poll() is None:
             try:
                 line = process.stderr.readline()
             except Exception:
@@ -668,7 +674,7 @@ class DsdFmeModule(AutoStartModule):
             meta["simplex"] = bool(state.get("simplex"))
             meta["encrypted"] = bool(state.get("encrypted"))
             meta["crypto_text"] = state.get("crypto_text") or ""
-            dmr_id = meta.get("id") if meta.get("id") is not None else state.get("source")
+            dmr_id = meta.get("id") or state.get("source")
             callsign, name = self.lookup_contact(dmr_id)
             meta["callsign"] = callsign
             meta["name"] = name
@@ -678,7 +684,7 @@ class DsdFmeModule(AutoStartModule):
             meta["uid"] = state.get("source")
             meta["encrypted"] = bool(state.get("encrypted"))
             meta["crypto_text"] = state.get("crypto_text") or ""
-            p25_uid = meta.get("uid") if meta.get("uid") is not None else state.get("source")
+            p25_uid = meta.get("uid") or state.get("source")
             callsign, name = self.lookup_contact(p25_uid)
             meta["callsign"] = callsign
             meta["name"] = name
@@ -768,9 +774,9 @@ class DsdFmeModule(AutoStartModule):
         if algid or keyid:
             parts = []
             if algid:
-                parts.append("ALG {}".format(algid))
+                parts.append(f"ALG {algid}")
             if keyid:
-                parts.append("KEY {}".format(keyid))
+                parts.append(f"KEY {keyid}")
             return " ".join(parts)
         return "ENCRYPTED"
 
@@ -866,10 +872,9 @@ class DsdFmeModule(AutoStartModule):
                 state["crypto_text"] = None
                 changed = True
 
-        if encryptedHit:
-            if not state.get("encrypted"):
-                changed = True
+        if encryptedHit and not state.get("encrypted"):
             state["encrypted"] = True
+            changed = True
 
         if algid is not None and state.get("algid") != algid:
             state["algid"] = algid
@@ -913,6 +918,26 @@ class DsdFmeModule(AutoStartModule):
         state["last_payload_hash"] = payloadHash
         self._emitMeta(meta)
 
+    def _extractDmrTargetSource(self, line):
+        """Extract (target, source) from DMR line using various patterns."""
+        simplex_header = DsdFmeModule.DMR_SIMPLEX_HEADER_REGEX.search(line)
+        if simplex_header:
+            return simplex_header.group(2), simplex_header.group(3)
+
+        slot_tgt_src = DsdFmeModule.DMR_SLOT_TGT_SRC_REGEX.search(line)
+        if slot_tgt_src:
+            return slot_tgt_src.group(2), slot_tgt_src.group(3)
+
+        source_target = DsdFmeModule.DMR_SOURCE_TARGET_REGEX.search(line)
+        if source_target:
+            return source_target.group(2), source_target.group(1)  # (target, source)
+
+        target_source = DsdFmeModule.DMR_TARGET_SOURCE_REGEX.search(line)
+        if target_source:
+            return target_source.group(1), target_source.group(2)
+
+        return None, None
+
     def _handleDmrLineLocked(self, line: str, now: float):
         slotMatch = DsdFmeModule.DMR_BRACKET_SLOT_REGEX.search(line)
         slotRaw = slotMatch.group(1) if slotMatch else None
@@ -922,10 +947,8 @@ class DsdFmeModule(AutoStartModule):
             self.dmrActiveSlot = bracketSlot
 
         slotForState = self.dmrActiveSlot
-        source = None
-        target = None
-        callType = None
         forceEmit = False
+        callType = None
 
         simplexHeader = DsdFmeModule.DMR_SIMPLEX_HEADER_REGEX.search(line)
         if simplexHeader is not None:
@@ -936,41 +959,23 @@ class DsdFmeModule(AutoStartModule):
             target = simplexHeader.group(2)
             source = simplexHeader.group(3)
             callTypeRaw = simplexHeader.group(4).strip().lower()
-            if "group" in callTypeRaw:
-                callType = "Group"
-            elif "private" in callTypeRaw:
-                callType = "Private"
+            callType = "Group" if "group" in callTypeRaw else "Private" if "private" in callTypeRaw else None
             forceEmit = True
         else:
-            slotTgtSrc = DsdFmeModule.DMR_SLOT_TGT_SRC_REGEX.search(line)
-            if slotTgtSrc is not None:
-                parsedSlot = self._toUiDmrSlot(slotTgtSrc.group(1))
-                if parsedSlot in self.dmrStates and not hasIdle:
-                    slotForState = parsedSlot
-                target = slotTgtSrc.group(2)
-                source = slotTgtSrc.group(3)
-            else:
-                sourceTarget = DsdFmeModule.DMR_SOURCE_TARGET_REGEX.search(line)
-                if sourceTarget is not None:
-                    source = sourceTarget.group(1)
-                    target = sourceTarget.group(2)
-                else:
-                    targetSource = DsdFmeModule.DMR_TARGET_SOURCE_REGEX.search(line)
-                    if targetSource is not None:
-                        target = targetSource.group(1)
-                        source = targetSource.group(2)
+            target, source = self._extractDmrTargetSource(line)
 
         if slotForState not in self.dmrStates:
             return
 
         state = self.dmrStates[slotForState]
-
         voice = (DsdFmeModule.DMR_CALL_ACTIVITY_REGEX.search(line) is not None) or forceEmit
+
         modeCode = self._extractModeCode(line, "DMR")
         if modeCode.get("cc") is not None:
             self.dmrLastCc[slotForState] = modeCode["cc"]
         elif self.dmrLastCc.get(slotForState) is not None:
             modeCode["cc"] = self.dmrLastCc[slotForState]
+
         encryptedHit = DsdFmeModule.ENCRYPTED_HIT_REGEX.search(line) is not None
         algid = None
         keyid = None
@@ -1036,6 +1041,7 @@ class DsdFmeModule(AutoStartModule):
             )
             return
 
+        # Non-P25 single mode (NXDN, DSTAR, YSF, etc.)
         source = self._extractFirst(DsdFmeModule.SOURCE_REGEXES, line)
         target = self._extractFirst(DsdFmeModule.TARGET_REGEXES, line)
         modeCode = self._extractModeCode(line, mode)
@@ -1060,6 +1066,25 @@ class DsdFmeModule(AutoStartModule):
             keyid=keyid,
         )
 
+    def _emitDiagMeta(self, line: str, now: float):
+        """Force an immediate metadata update containing the diag line."""
+        with self.stateLock:
+            self.lastDiagLine = line[:500]
+            logger.debug("DSDFME_DIAG_CAPTURED: %s", self.lastDiagLine)
+            if self.dmrActiveSlot is not None and self.dmrActiveSlot in self.dmrStates:
+                diagMeta = {
+                    "protocol": DsdFmeModule.META_PROTOCOL,
+                    "mode": "DMR",
+                    "diag": self.lastDiagLine,
+                }
+                if self.dmrActiveSlot:
+                    diagMeta["slot"] = self.dmrActiveSlot
+                self._emitMeta(diagMeta)
+
+            if now - self.lastDiagLogTs >= DsdFmeModule.DIAG_THROTTLE_SEC:
+                self.lastDiagLogTs = now
+                logger.info("DSDFME_RAW: %s", self.lastDiagLine)
+
     def _parseStderrLine(self, line: str):
         if not line:
             return
@@ -1068,26 +1093,24 @@ class DsdFmeModule(AutoStartModule):
             return
         now = time.monotonic()
 
-        with self.stateLock:
-            if DsdFmeModule.DIAG_LOG_REGEX.search(line) is not None:
-                self.lastDiagLine = line[:200]
-                if now - self.lastDiagLogTs >= DsdFmeModule.DIAG_THROTTLE_SEC:
-                    self.lastDiagLogTs = now
-                    logger.info("DSDFME_RAW: %s", self.lastDiagLine)
+        # Capture diagnostic lines for the web interface
+        if DsdFmeModule.DIAG_LOG_REGEX.search(line) is not None:
+            self._emitDiagMeta(line, now)
 
+        with self.stateLock:
             modeDetected = self._detectMode(line)
             if modeDetected is not None:
                 self.lastMode = modeDetected
 
             mode = modeDetected if modeDetected is not None else self.lastMode
-            if (
-                DsdFmeModule.DMR_SYNC_VOICE_REGEX.search(line) is not None
-                or DsdFmeModule.DMR_CALL_ACTIVITY_REGEX.search(line) is not None
-                or DsdFmeModule.DMR_BRACKET_SLOT_REGEX.search(line) is not None
-                or DsdFmeModule.DMR_SLOT_TGT_SRC_REGEX.search(line) is not None
-                or DsdFmeModule.DMR_SOURCE_TARGET_REGEX.search(line) is not None
-                or DsdFmeModule.DMR_TARGET_SOURCE_REGEX.search(line) is not None
-            ):
+
+            # Force mode to DMR for certain patterns
+            if (DsdFmeModule.DMR_SYNC_VOICE_REGEX.search(line) is not None or
+                DsdFmeModule.DMR_CALL_ACTIVITY_REGEX.search(line) is not None or
+                DsdFmeModule.DMR_BRACKET_SLOT_REGEX.search(line) is not None or
+                DsdFmeModule.DMR_SLOT_TGT_SRC_REGEX.search(line) is not None or
+                DsdFmeModule.DMR_SOURCE_TARGET_REGEX.search(line) is not None or
+                DsdFmeModule.DMR_TARGET_SOURCE_REGEX.search(line) is not None):
                 mode = "DMR"
             elif DsdFmeModule.P25_SYNC_VOICE_REGEX.search(line) is not None:
                 mode = "P25"
