@@ -12,7 +12,7 @@ BOLD='\033[1m'
 # --- Configuration & Paths ---
 OWRX_DIR="/usr/lib/python3/dist-packages/owrx"
 CSDR_DIR="/usr/lib/python3/dist-packages/csdr"
-HTDOCS_DIR="/usr/lib/python3/dist-packages/htdocs/plugins/receiver"
+HTDOCS_PLUGIN_DIR="/usr/lib/python3/dist-packages/htdocs/plugins/receiver"
 LOCAL_CSDR="$(pwd)/overlay/python/csdr"
 LOCAL_PLUGINS="$(pwd)/overlay/htdocs/plugins/receiver"
 
@@ -131,9 +131,9 @@ for file in "module/dsdfme.py" "chain/dsdfme.py"; do
     fi
 done
 
-# STEP 4: Web Plugin Installation
-print_header "STEP 4: INSTALLING WEB PLUGINS"
-PLUGIN_DEST="$HTDOCS_DIR/dsdfme_auto"
+# STEP 4: Install Plugin Files
+print_header "STEP 4: INSTALLING WEB PLUGIN FILES"
+PLUGIN_DEST="$HTDOCS_PLUGIN_DIR/dsdfme_auto"
 PLUGIN_SRC="$LOCAL_PLUGINS/dsdfme_auto"
 if [ -d "$PLUGIN_DEST" ]; then
     echo -e "   [${YELLOW} EXISTS ${NC}] Plugin folder already installed."
@@ -145,19 +145,31 @@ else
     fi
 fi
 
-# Register plugin in main init.js (single line instead of appending whole loader)
-print_header "STEP 4b: REGISTER PLUGIN IN INIT.JS"
-PLUGIN_LOAD_LINE="Plugins.load('receiver/dsdfme_auto');"
-MAIN_INIT_JS="/usr/lib/python3/dist-packages/htdocs/init.js"
+# STEP 5: Register Plugin in receiver/init.js
+print_header "STEP 5: REGISTER PLUGIN IN RECEIVER INIT.JS"
+RECEIVER_INIT_JS="$HTDOCS_PLUGIN_DIR/init.js"
+RECEIVER_INIT_SAMPLE="${RECEIVER_INIT_JS}.sample"
 
-if ! grep -qF "$PLUGIN_LOAD_LINE" "$MAIN_INIT_JS"; then
-    # If there's already any Plugins.load line, insert after the last one; otherwise append
-    if grep -q "Plugins.load" "$MAIN_INIT_JS"; then
-        LINE=$(grep -n "Plugins.load" "$MAIN_INIT_JS" | tail -1 | cut -d: -f1)
-        sed -i "${LINE}a ${PLUGIN_LOAD_LINE}" "$MAIN_INIT_JS"
+if [ ! -f "$RECEIVER_INIT_JS" ]; then
+    if [ -f "$RECEIVER_INIT_SAMPLE" ]; then
+        cp "$RECEIVER_INIT_SAMPLE" "$RECEIVER_INIT_JS"
+        echo -e "   [${GREEN} CREATE ${NC}] Created init.js from sample"
+    else
+        echo -e "   [${RED} ERROR ${NC}] Neither init.js nor init.js.sample found in $HTDOCS_PLUGIN_DIR!"
+        exit 1
+    fi
+fi
+
+PLUGIN_LOAD_LINE="Plugins.load('dsdfme_auto');"
+
+if ! grep -qF "$PLUGIN_LOAD_LINE" "$RECEIVER_INIT_JS"; then
+    # Insert after the last Plugins.load line, or append if none exists
+    if grep -q "Plugins.load" "$RECEIVER_INIT_JS"; then
+        LINE=$(grep -n "Plugins.load" "$RECEIVER_INIT_JS" | tail -1 | cut -d: -f1)
+        sed -i "${LINE}a ${PLUGIN_LOAD_LINE}" "$RECEIVER_INIT_JS"
         echo -e "   [${GREEN} PATCH ${NC}] Added plugin load line after line $LINE"
     else
-        echo "$PLUGIN_LOAD_LINE" >> "$MAIN_INIT_JS"
+        echo "$PLUGIN_LOAD_LINE" >> "$RECEIVER_INIT_JS"
         echo -e "   [${GREEN} PATCH ${NC}] Appended plugin load line to end of file"
     fi
 else
