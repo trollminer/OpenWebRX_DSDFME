@@ -1,7 +1,7 @@
 
 This branch includes a terminal-style output in the panel within the Openwebrx+ interface
 
-To pull this branch - git clone --branch with-terminal --single-branch https://github.com/trollminer/OpenWebRX_DSDFME.git
+To pull this branch - git clone --branch with-term-clean-init-file --single-branch https://github.com/trollminer/OpenWebRX_DSDFME.git
 
 --
 
