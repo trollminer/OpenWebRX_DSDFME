@@ -41,19 +41,6 @@ patch_content() {
     fi
 }
 
-append_js_logic() {
-    local SRC="$1"
-    local DEST="$2"
-    if [ ! -f "$SRC" ]; then echo -e "   [${RED} ERROR ${NC}] Source JS $SRC not found."; return; fi
-    local IDENTIFIER=$(head -n 2 "$SRC" | tail -n 1)
-    if [ -f "$DEST" ] && grep -qF "$IDENTIFIER" "$DEST"; then
-        echo -e "   [${YELLOW} EXISTS ${NC}] Logic already in $(basename "$DEST")"
-    else
-        echo -e "   [${GREEN} APPEND ${NC}] Adding plugin logic to $(basename "$DEST")..."
-        cat "$SRC" >> "$DEST"
-    fi
-}
-
 build_project() {
     local REPO_URL="$1"
     local PROJ_NAME="$2"
@@ -148,12 +135,34 @@ done
 print_header "STEP 4: INSTALLING WEB PLUGINS"
 PLUGIN_DEST="$HTDOCS_DIR/dsdfme_auto"
 PLUGIN_SRC="$LOCAL_PLUGINS/dsdfme_auto"
-if [ -d "$PLUGIN_DEST" ]; then echo -e "   [${YELLOW} EXISTS ${NC}] Plugin folder already installed."; else
+if [ -d "$PLUGIN_DEST" ]; then
+    echo -e "   [${YELLOW} EXISTS ${NC}] Plugin folder already installed."
+else
     if [ -d "$PLUGIN_SRC" ]; then
         mkdir -p "$PLUGIN_DEST" && cp -rv "$PLUGIN_SRC/." "$PLUGIN_DEST/"
-    else echo -e "   [${RED} ERROR ${NC}] Source plugin folder not found!"; fi
+    else
+        echo -e "   [${RED} ERROR ${NC}] Source plugin folder not found!"
+    fi
 fi
-append_js_logic "$LOCAL_PLUGINS/init.js" "$HTDOCS_DIR/init.js"
+
+# Register plugin in main init.js (single line instead of appending whole loader)
+print_header "STEP 4b: REGISTER PLUGIN IN INIT.JS"
+PLUGIN_LOAD_LINE="Plugins.load('receiver/dsdfme_auto');"
+MAIN_INIT_JS="/usr/lib/python3/dist-packages/htdocs/init.js"
+
+if ! grep -qF "$PLUGIN_LOAD_LINE" "$MAIN_INIT_JS"; then
+    # If there's already any Plugins.load line, insert after the last one; otherwise append
+    if grep -q "Plugins.load" "$MAIN_INIT_JS"; then
+        LINE=$(grep -n "Plugins.load" "$MAIN_INIT_JS" | tail -1 | cut -d: -f1)
+        sed -i "${LINE}a ${PLUGIN_LOAD_LINE}" "$MAIN_INIT_JS"
+        echo -e "   [${GREEN} PATCH ${NC}] Added plugin load line after line $LINE"
+    else
+        echo "$PLUGIN_LOAD_LINE" >> "$MAIN_INIT_JS"
+        echo -e "   [${GREEN} PATCH ${NC}] Appended plugin load line to end of file"
+    fi
+else
+    echo -e "   [${YELLOW} EXISTS ${NC}] Plugin already registered in init.js"
+fi
 
 print_header "INSTALLATION COMPLETE"
 echo -e "${YELLOW}Restarting OpenWebRX...${NC}"
