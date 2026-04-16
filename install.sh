@@ -105,10 +105,10 @@ BLOCK_FEAT_FUNC='
         return self.command_is_runnable("dsd-fme -h")'
 BLOCK_MODE_ALIAS='    aliases = { "dsd-fme-auto": "dsdfme", }'
 BLOCK_MODE_DEFS='
-        AnalogMode("dsdfme", "FME-XDMA", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),
-        AnalogMode("dsdfme-nxdn48", "FME-N48", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),
-        AnalogMode("dsdfme-nxdn96", "FME-N96", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),
-        AnalogMode("dsdfme-dpmr", "FME-dPMR", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),'
+        AnalogMode("dsdfme", "XDMA", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),
+        AnalogMode("dsdfme-nxdn48", "NX48", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),
+        AnalogMode("dsdfme-nxdn96", "NX96", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),
+        AnalogMode("dsdfme-dpmr", "dPMR", bandpass=Bandpass(-6250, 6250), requirements=["digital_voice_dsd_fme"], squelch=False),'
 BLOCK_DSP_ROUTING='        elif demod in ["dsdfme", "dsd-fme-auto", "dsdfme-nxdn48", "dsdfme-nxdn96", "dsdfme-dpmr"]:
             from csdr.chain.dsdfme import DsdFmeAuto
             return DsdFmeAuto(profile_key=demod)'
